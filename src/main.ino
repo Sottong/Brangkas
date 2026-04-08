@@ -1,83 +1,68 @@
 #include <Arduino.h>
-#include <HardwareSerial.h>
-#include <Adafruit_Fingerprint.h>
+#include <Wire.h>
+#include <I2CKeyPad.h>
 
-// Definisi Pin UART Fingerprint (Serial2 ESP32)
-#define PIN_FP_RX 32
-#define PIN_FP_TX 33
+// Definisi Pin I2C
+#define PIN_I2C_SDA 13
+#define PIN_I2C_SCL 14
 
-// Objek Komunikasi Serial untuk Fingerprint
-HardwareSerial mySerial(2); 
+// Alamat I2C Keypad (bisa 0x20 atau 0x27)
+#define KEYPAD_I2C_ADDR 0x27
 
-// Objek Fingerprint Sensor
-Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
+// Objek I2C Keypad
+I2CKeyPad keyPad(KEYPAD_I2C_ADDR);
+
+// Layout Keypad 4x4 Standar
+char keyMap[] = "123A456B789C*0#D";
+
+// Variabel untuk melacak status tombol sebelumnya
+char lastKey = 'N'; 
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial); // Tunggu sampai Serial Monitor siap
-  delay(100);
+  while (!Serial); // Tunggu sampai Serial siap
   
-  Serial.println("\n\nMemulai Test Fingerprint Sensor...");
+  Serial.println("\nMemulai Test Keypad (Trigger Saat Dilepas)...");
 
-  // Inisialisasi Serial2 untuk Fingerprint (Baudrate default modul biasanya 57600)
-  mySerial.begin(57600, SERIAL_8N1, PIN_FP_RX, PIN_FP_TX);
+  // Inisialisasi I2C Bus dengan pin custom
+  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
-  // Inisialisasi library fingerprint
-  finger.begin(57600);
-
-  // Cek apakah sensor terdeteksi
-  if (finger.verifyPassword()) {
-    Serial.println("Sensor Fingerprint DITEMUKAN!");
+  // Inisialisasi Keypad
+  if (keyPad.begin()) {
+    Serial.println("I2C Keypad berhasil diinisialisasi pada alamat 0x27.");
+    keyPad.loadKeyMap(keyMap);
   } else {
-    Serial.println("Sensor Fingerprint TIDAK terdeteksi :(");
-    Serial.println("Periksa koneksi kabel (RX->33, TX->32) atau power sensor.");
-    while (1) { delay(1); } // Berhenti jika sensor tidak ditemukan
+    Serial.println("GAGAL inisialisasi I2C Keypad. Periksa koneksi atau alamat I2C.");
+    for (;;); // Berhenti di sini jika gagal
   }
 
-  // Baca parameter sensor
-  Serial.println("\nMembaca parameter sensor...");
-  finger.getParameters();
-  Serial.print("Status: 0x"); Serial.println(finger.status_reg, HEX);
-  Serial.print("Sys ID: 0x"); Serial.println(finger.system_id, HEX);
-  Serial.print("Kapasitas: "); Serial.println(finger.capacity);
-  Serial.print("Security level: "); Serial.println(finger.security_level);
-  Serial.print("Device address: "); Serial.println(finger.device_addr, HEX);
-  Serial.print("Packet len: "); Serial.println(finger.packet_len);
-  Serial.print("Baud rate: "); Serial.println(finger.baud_rate);
-
-  finger.getTemplateCount();
-  if (finger.templateCount == 0) {
-    Serial.print("Sensor tidak memiliki data sidik jari. Silakan enroll terlebih dahulu.");
-  } else {
-    Serial.println("Terdapat " + String(finger.templateCount) + " data sidik jari.");
-  }
-  
   Serial.println("\n--- Sistem Siap ---");
-  Serial.println("Silakan tempelkan jari Anda ke sensor...");
-}
-
-// Fungsi untuk membaca sidik jari
-int getFingerprintIDez() {
-  uint8_t p = finger.getImage();
-  if (p != FINGERPRINT_OK)  return -1;
-
-  p = finger.image2Tz();
-  if (p != FINGERPRINT_OK)  return -1;
-
-  p = finger.fingerFastSearch();
-  if (p != FINGERPRINT_OK) {
-    Serial.println("Sidik jari tidak cocok / belum terdaftar!");
-    return -1;
-  }
-  
-  // Jika cocok, print ID dan confidence
-  Serial.print("Ditemukan ID #"); Serial.print(finger.fingerID); 
-  Serial.print(" dengan tingkat kecocokan (confidence) "); Serial.println(finger.confidence);
-  
-  return finger.fingerID; 
+  Serial.println("Tahan tombol, dan lepaskan untuk memicu input.");
 }
 
 void loop() {
-  getFingerprintIDez();
-  delay(50); // Delay kecil agar pembacaan tidak terlalu cepat
+  // Secara default, asumsikan tidak ada tombol yang ditekan ('N' = None/Null)
+  char currentKey = 'N'; 
+
+  // Cek apakah ada tombol yang sedang ditekan
+  if (keyPad.isPressed()) {
+    currentKey = keyPad.getChar();
+  }
+
+  // LOGIKA TRIGGER SAAT DILEPAS (RELEASE DETECT):
+  // Jika sebelumnya ada tombol yang ditekan (lastKey != 'N')
+  // DAN saat ini tidak ada tombol yang ditekan (currentKey == 'N')
+  if (lastKey != 'N' && currentKey == 'N') {
+    Serial.print("Tombol diproses (setelah dilepas): ");
+    Serial.println(lastKey);
+    
+    // Taruh aksi eksekusi/output di sini
+    // (Misal: memasukkan karakter ke buffer, membunyikan buzzer, dll)
+  }
+
+  // Update lastKey dengan status tombol saat ini untuk pembacaan loop berikutnya
+  lastKey = currentKey;
+
+  // Delay kecil untuk debouncing fisik tombol
+  delay(50);
 }
