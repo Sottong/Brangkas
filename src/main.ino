@@ -1,116 +1,83 @@
 #include <Arduino.h>
-#include <Wire.h>
-#include <Adafruit_GFX.h>
-#include <Adafruit_SSD1306.h>
-#include <I2CKeyPad.h>
+#include <HardwareSerial.h>
+#include <Adafruit_Fingerprint.h>
 
-// Definisi Pin I2C
-#define PIN_I2C_SDA 13
-#define PIN_I2C_SCL 14
+// Definisi Pin UART Fingerprint (Serial2 ESP32)
+#define PIN_FP_RX 32
+#define PIN_FP_TX 33
 
-// Definisi Konfigurasi OLED
-#define SCREEN_WIDTH   128 // OLED display width, in pixels
-#define SCREEN_HEIGHT   64 // OLED display height, in pixels
-#define OLED_RESET      -1 // Reset pin (or -1 if using Arduino reset)
-#define SCREEN_ADDRESS 0x3C // OLED I2C address
+// Objek Komunikasi Serial untuk Fingerprint
+HardwareSerial mySerial(2); 
 
-// Alamat I2C Keypad (bisa 0x20 atau 0x27)
-#define KEYPAD_I2C_ADDR 0x27
-
-// Inisialisasi Objek Layar OLED
-Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
-
-// Objek I2C Keypad
-I2CKeyPad keyPad(KEYPAD_I2C_ADDR);
-
-// Layout Keypad 4x4 Standar
-char keyMap[] = "123A456B789C*0#D";
-
-String inputBuffer = ""; // Untuk menyimpan urutan tombol yang ditekan
+// Objek Fingerprint Sensor
+Adafruit_Fingerprint finger = Adafruit_Fingerprint(&mySerial);
 
 void setup() {
   Serial.begin(115200);
-  while (!Serial); // Tunggu sampai Serial siap
+  while (!Serial); // Tunggu sampai Serial Monitor siap
+  delay(100);
   
-  Serial.println("\nMemulai Test Gabungan OLED & Keypad...");
+  Serial.println("\n\nMemulai Test Fingerprint Sensor...");
 
-  // Inisialisasi I2C Bus dengan pin custom
-  Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
+  // Inisialisasi Serial2 untuk Fingerprint (Baudrate default modul biasanya 57600)
+  mySerial.begin(57600, SERIAL_8N1, PIN_FP_RX, PIN_FP_TX);
 
-  // Inisialisasi Layar OLED
-  if(!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS)) {
-    Serial.println(F("SSD1306 allocation failed. Periksa koneksi atau alamat I2C."));
-    for(;;); // Berhenti di sini jika gagal
-  }
-  
-  // Inisialisasi Keypad
-  if (keyPad.begin()) {
-    Serial.println("I2C Keypad berhasil diinisialisasi pada alamat 0x27.");
-    keyPad.loadKeyMap(keyMap);
+  // Inisialisasi library fingerprint
+  finger.begin(57600);
+
+  // Cek apakah sensor terdeteksi
+  if (finger.verifyPassword()) {
+    Serial.println("Sensor Fingerprint DITEMUKAN!");
   } else {
-    Serial.println("GAGAL inisialisasi I2C Keypad. Periksa koneksi atau alamat I2C.");
-    for (;;); // Berhenti di sini jika gagal
+    Serial.println("Sensor Fingerprint TIDAK terdeteksi :(");
+    Serial.println("Periksa koneksi kabel (RX->33, TX->32) atau power sensor.");
+    while (1) { delay(1); } // Berhenti jika sensor tidak ditemukan
   }
 
-  Serial.println("\n--- Sistem Siap ---");
+  // Baca parameter sensor
+  Serial.println("\nMembaca parameter sensor...");
+  finger.getParameters();
+  Serial.print("Status: 0x"); Serial.println(finger.status_reg, HEX);
+  Serial.print("Sys ID: 0x"); Serial.println(finger.system_id, HEX);
+  Serial.print("Kapasitas: "); Serial.println(finger.capacity);
+  Serial.print("Security level: "); Serial.println(finger.security_level);
+  Serial.print("Device address: "); Serial.println(finger.device_addr, HEX);
+  Serial.print("Packet len: "); Serial.println(finger.packet_len);
+  Serial.print("Baud rate: "); Serial.println(finger.baud_rate);
 
-  // Tampilan awal pada OLED
-  display.clearDisplay();
-  display.setTextSize(1);
-  display.setTextColor(SSD1306_WHITE);
-  display.setCursor(0, 0);
-  display.println(F("Test Sistem Brangkas"));
-  display.setCursor(0, 16);
-  display.println(F("OLED & Keypad: OK"));
-  display.setCursor(0, 32);
-  display.println(F("Tekan tombol..."));
-  display.display();
+  finger.getTemplateCount();
+  if (finger.templateCount == 0) {
+    Serial.print("Sensor tidak memiliki data sidik jari. Silakan enroll terlebih dahulu.");
+  } else {
+    Serial.println("Terdapat " + String(finger.templateCount) + " data sidik jari.");
+  }
+  
+  Serial.println("\n--- Sistem Siap ---");
+  Serial.println("Silakan tempelkan jari Anda ke sensor...");
+}
+
+// Fungsi untuk membaca sidik jari
+int getFingerprintIDez() {
+  uint8_t p = finger.getImage();
+  if (p != FINGERPRINT_OK)  return -1;
+
+  p = finger.image2Tz();
+  if (p != FINGERPRINT_OK)  return -1;
+
+  p = finger.fingerFastSearch();
+  if (p != FINGERPRINT_OK) {
+    Serial.println("Sidik jari tidak cocok / belum terdaftar!");
+    return -1;
+  }
+  
+  // Jika cocok, print ID dan confidence
+  Serial.print("Ditemukan ID #"); Serial.print(finger.fingerID); 
+  Serial.print(" dengan tingkat kecocokan (confidence) "); Serial.println(finger.confidence);
+  
+  return finger.fingerID; 
 }
 
 void loop() {
-  // Mengecek apakah ada tombol yang ditekan
-  if (keyPad.isPressed()) {
-    char key = keyPad.getChar();
-    
-    // Pastikan nilai tombol valid
-    if (key != 'N') {
-      Serial.print("Tombol ditekan: ");
-      Serial.println(key);
-      
-      // Update tampilan OLED
-      display.clearDisplay();
-      
-      display.setTextSize(1);
-      display.setCursor(0, 0);
-      display.println(F("Test Sistem Brangkas"));
-      
-      display.setCursor(0, 16);
-      display.println(F("Input Anda:"));
-      
-      // Logika untuk tombol khusus (misal: C untuk hapus semua, D untuk hapus 1 karakter)
-      if (key == 'C') {
-        inputBuffer = ""; // Clear buffer
-      } else if (key == 'D') {
-        if (inputBuffer.length() > 0) {
-          inputBuffer.remove(inputBuffer.length() - 1); // Hapus karakter terakhir
-        }
-      } else {
-        // Tambahkan karakter ke buffer (maksimal 10 karakter agar muat di layar)
-        if (inputBuffer.length() < 10) {
-          inputBuffer += key;
-        }
-      }
-      
-      // Tampilkan input yang diketik dengan ukuran text lebih besar (Text Size 2)
-      display.setTextSize(2);
-      display.setCursor(0, 32);
-      display.print(inputBuffer);
-      
-      // Kirim buffer ke layar OLED
-      display.display();
-      
-      // Delay sederhana untuk debounce dan mencegah pembacaan ganda
-      delay(200); 
-    }
-  }
+  getFingerprintIDez();
+  delay(50); // Delay kecil agar pembacaan tidak terlalu cepat
 }
