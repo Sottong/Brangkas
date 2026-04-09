@@ -10,9 +10,9 @@ Berdasarkan kode awal yang ada di `main.ino`, berikut adalah pemetaan pin yang a
 *   **Sensor Sidik Jari**: UART 2 (RX: 32, TX: 33)
 *   **Keypad 4x4**: I2C (SDA: 13, SCL: 14) via modul PCF8574 (Alamat: 0x27)
 *   **OLED 128x64**: I2C (SDA: 13, SCL: 14) (Alamat: 0x3C)
-*   **Aktuator Utama**: Door Lock Relay / Solenoid (Pin: 15)
+*   **Aktuator Utama**: Door Lock Relay / Solenoid (Pin: 0)
 *   **Alarm System**:
-    *   Limit Switch 1 (Deteksi Brangkas Diangkat): Pin 0 (Input Pullup)
+    *   Limit Switch 1 (Deteksi Brangkas Diangkat): Pin 15 (Input Pullup)
     *   Limit Switch 2 (Deteksi Pintu Paksa Buka): Pin 2 (Input Pullup)
     *   Buzzer: Pin 12
 *   **Kamera**: Menggunakan library ESP32 Camera (koneksi pin paralel standar ESP32-CAM/WROVER). *Catatan: Pinout spesifik kamera perlu disesuaikan.*
