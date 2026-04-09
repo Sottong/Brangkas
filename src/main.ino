@@ -9,6 +9,11 @@
 // ==========================================
 // 1. DEFINISI PIN HARDWARE & ALAMAT
 // ==========================================
+#define RELAY_PIN 0
+#define LIMIT_SWITCH_1_PIN 15
+#define LIMIT_SWITCH_2_PIN 2
+#define BUZZER_PIN 12
+
 #define PIN_I2C_SDA 13
 #define PIN_I2C_SCL 14
 #define KEYPAD_I2C_ADDR 0x27
@@ -49,6 +54,9 @@ SystemState currentState = STATE_IDLE;
 unsigned long lastDisplayUpdate = 0;
 const unsigned long DISPLAY_INTERVAL = 1000;
 
+// Variabel Alarm
+unsigned long alarmStartTime = 0;
+
 // Variabel Autentikasi
 String inputBuffer = "";
 const String USER_PIN = "1234";    // PIN User default
@@ -72,6 +80,7 @@ void handleAuthFingerState();
 void handleAuthPinState();
 void handleAdminAuthState();
 void handleAdminState();
+void handleAlarmState();
 
 // ==========================================
 // 5. SETUP
@@ -80,8 +89,18 @@ void setup() {
   Serial.begin(115200);
   while (!Serial);
   Serial.println("\n\n===================================");
-  Serial.println("  SISTEM BRANGKAS V2 - FASE 2      ");
+  Serial.println("  SISTEM BRANGKAS V2 - FASE 3      ");
   Serial.println("===================================");
+
+  // Inisialisasi Pin Relay, Limit Switch, Buzzer
+  pinMode(RELAY_PIN, OUTPUT);
+  digitalWrite(RELAY_PIN, LOW); // Asumsi LOW = Terkunci
+  
+  pinMode(LIMIT_SWITCH_1_PIN, INPUT_PULLDOWN); // Internal Pull-Down (Aktif High)
+  pinMode(LIMIT_SWITCH_2_PIN, INPUT_PULLDOWN); // Internal Pull-Down (Aktif High)
+  
+  pinMode(BUZZER_PIN, OUTPUT);
+  digitalWrite(BUZZER_PIN, LOW);
 
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL);
 
@@ -117,6 +136,17 @@ void setup() {
 // 6. MAIN LOOP (NON-BLOCKING)
 // ==========================================
 void loop() {
+  // Cek limit switch untuk alarm (jika sedang tidak unlocked dan tidak alarm)
+  if (currentState != STATE_UNLOCKED && currentState != STATE_ALARM) {
+    if (digitalRead(LIMIT_SWITCH_1_PIN) == LOW || digitalRead(LIMIT_SWITCH_2_PIN) == LOW) {
+      Serial.println("[ALARM] LIMIT SWITCH TERPICU!");
+      currentState = STATE_ALARM;
+      alarmStartTime = millis();
+      digitalWrite(BUZZER_PIN, HIGH);
+      updateDisplay("PERINGATAN!", "Limit Switch", "Terpicu!");
+    }
+  }
+
   if (inCooldown) {
     if (millis() - cooldownStartTime > 60000) {
       Serial.println("[COOLDOWN] Waktu habis. Kembali ke STATE_IDLE.");
@@ -149,11 +179,13 @@ void loop() {
       Serial.println("[STATE] Berpindah ke STATE_UNLOCKED. Pintu terbuka.");
       updateDisplay("TERBUKA", "Silakan Buka", "Pintu");
       delay(3000);
+      digitalWrite(RELAY_PIN, LOW); // Kunci kembali relay
       Serial.println("[STATE] Kembali ke STATE_IDLE mengunci kembali.");
       currentState = STATE_IDLE;
       updateDisplay("BRANGKAS V2", "Status: TERKUNCI", "Tempelkan Jari");
       break;
     case STATE_ALARM:
+      handleAlarmState();
       break;
     case STATE_ADMIN_AUTH:
       handleAdminAuthState();
@@ -167,6 +199,23 @@ void loop() {
 // ==========================================
 // 7. IMPLEMENTASI STATE HANDLER
 // ==========================================
+
+void handleAlarmState() {
+  // Alarm berbunyi selama 20 detik
+  if (millis() - alarmStartTime >= 20000) {
+    if (digitalRead(LIMIT_SWITCH_1_PIN) == HIGH && digitalRead(LIMIT_SWITCH_2_PIN) == HIGH) {
+      Serial.println("[ALARM] Kondisi aman. Mematikan alarm.");
+      digitalWrite(BUZZER_PIN, LOW);
+      currentState = STATE_IDLE;
+      updateDisplay("BRANGKAS V2", "Status: TERKUNCI", "Tempelkan Jari");
+    } else {
+      Serial.println("[ALARM] Limit switch masih terpicu. Reset timer alarm.");
+      alarmStartTime = millis(); // Perpanjang alarm 20 detik
+    }
+  }
+  
+  // Bisa tambahkan override admin di sini jika ingin matikan manual
+}
 
 void handleIdleState() {
   char key = readKeypad();
@@ -235,6 +284,7 @@ void handleAuthPinState() {
         Serial.println("[AUTH] PIN User BENAR!");
         failedAttempts = 0;
         currentState = STATE_UNLOCKED;
+        digitalWrite(RELAY_PIN, HIGH); // Buka kunci relay
       } else {
         failedAttempts++;
         Serial.printf("[AUTH] PIN User SALAH! Percobaan gagal ke-%d\n", failedAttempts);
