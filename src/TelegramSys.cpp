@@ -78,7 +78,7 @@ void handleNewMessages(int numNewMessages) {
     }
 }
 
-// =================== KIRIM FOTO (RAW HTTP + CHUNK 1024) ===================
+// =================== KIRIM FOTO (RGB565 → ROTATE 90° CCW → JPEG → SEND) ===================
 String sendPhotoTelegram(String chatId) {
     if (chatId == "") return "No chat ID";
 
@@ -99,16 +99,60 @@ String sendPhotoTelegram(String chatId) {
         return "Camera capture failed";
     }
 
-    Serial.printf("[TELEGRAM] Foto diambil: %d bytes\n", fb->len);
+    int srcW = fb->width;
+    int srcH = fb->height;
+    int dstW = srcH;  // Setelah rotasi 90° CCW: lebar baru = tinggi lama
+    int dstH = srcW;  // tinggi baru = lebar lama
 
+    Serial.printf("[ROTATE] Input: %dx%d → Output: %dx%d\n", srcW, srcH, dstW, dstH);
+
+    // Alokasi buffer rotasi di PSRAM
+    size_t rotBufSize = dstW * dstH * 2; // RGB565 = 2 bytes/pixel
+    uint8_t *rotBuf = (uint8_t *)ps_malloc(rotBufSize);
+    if (!rotBuf) {
+        Serial.println("[ROTATE] Gagal alokasi PSRAM!");
+        esp_camera_fb_return(fb);
+        return "PSRAM allocation failed";
+    }
+
+    // Rotasi 90° Clockwise (CW) — ke kanan
+    // src(x, y) → dst(srcH - 1 - y, x)
+    uint16_t *src = (uint16_t *)fb->buf;
+    uint16_t *dst = (uint16_t *)rotBuf;
+    for (int y = 0; y < srcH; y++) {
+        for (int x = 0; x < srcW; x++) {
+            int srcIdx = y * srcW + x;
+            int dstX = srcH - 1 - y;
+            int dstY = x;
+            int dstIdx = dstY * dstW + dstX;
+            dst[dstIdx] = src[srcIdx];
+        }
+    }
+
+    esp_camera_fb_return(fb); // Frame asli sudah tidak dibutuhkan
+    Serial.println("[ROTATE] Rotasi selesai.");
+
+    // Konversi RGB565 → JPEG
+    uint8_t *jpgBuf = NULL;
+    size_t jpgLen = 0;
+    bool converted = fmt2jpg(rotBuf, rotBufSize, dstW, dstH, PIXFORMAT_RGB565, 80, &jpgBuf, &jpgLen);
+    free(rotBuf); // Buffer rotasi tidak diperlukan lagi
+
+    if (!converted || !jpgBuf) {
+        Serial.println("[JPEG] Konversi ke JPEG gagal!");
+        return "JPEG conversion failed";
+    }
+
+    Serial.printf("[JPEG] Ukuran JPEG: %d bytes\n", jpgLen);
+
+    // Kirim ke Telegram via chunked HTTP POST
     if (client.connect(myDomain, 443)) {
-        Serial.println("[TELEGRAM] Mengirim foto (chunked)...");
+        Serial.println("[TELEGRAM] Mengirim foto (rotated)...");
 
         String head = "--ESP32Boundary\r\nContent-Disposition: form-data; name=\"chat_id\"; \r\n\r\n" + chatId + "\r\n--ESP32Boundary\r\nContent-Disposition: form-data; name=\"photo\"; filename=\"esp32-cam.jpg\"\r\nContent-Type: image/jpeg\r\n\r\n";
         String tail = "\r\n--ESP32Boundary--\r\n";
 
-        size_t imageLen = fb->len;
-        size_t totalLen = imageLen + head.length() + tail.length();
+        size_t totalLen = jpgLen + head.length() + tail.length();
 
         client.println("POST /bot" + String(BOT_TOKEN) + "/sendPhoto HTTP/1.1");
         client.println("Host: " + String(myDomain));
@@ -117,21 +161,17 @@ String sendPhotoTelegram(String chatId) {
         client.println();
         client.print(head);
 
-        // Kirim data foto dalam chunk 1024 byte
-        uint8_t *fbBuf = fb->buf;
-        size_t fbLen = fb->len;
-        for (size_t n = 0; n < fbLen; n = n + 1024) {
-            if (n + 1024 < fbLen) {
-                client.write(fbBuf, 1024);
-                fbBuf += 1024;
-            } else if (fbLen % 1024 > 0) {
-                size_t remainder = fbLen % 1024;
-                client.write(fbBuf, remainder);
-            }
+        // Kirim JPEG dalam chunk 1024 byte
+        uint8_t *buf = jpgBuf;
+        size_t remaining = jpgLen;
+        for (size_t n = 0; n < jpgLen; n += 1024) {
+            size_t chunkSize = (remaining > 1024) ? 1024 : remaining;
+            client.write(buf, chunkSize);
+            buf += chunkSize;
+            remaining -= chunkSize;
         }
 
         client.print(tail);
-        esp_camera_fb_return(fb);
 
         // Baca respons dengan timeout 10 detik
         int waitTime = 10000;
@@ -155,10 +195,11 @@ String sendPhotoTelegram(String chatId) {
         client.stop();
         Serial.println("[TELEGRAM] Foto terkirim.");
     } else {
-        esp_camera_fb_return(fb);
         getBody = "Connection to api.telegram.org failed.";
         Serial.println("[TELEGRAM] Koneksi ke server gagal.");
     }
+
+    free(jpgBuf); // Bersihkan buffer JPEG
     return getBody;
 }
 

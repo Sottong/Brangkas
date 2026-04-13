@@ -23,14 +23,16 @@ void initCamera() {
   config.pin_pwdn = PWDN_GPIO_NUM;
   config.pin_reset = RESET_GPIO_NUM;
   config.xclk_freq_hz = 20000000;
-  config.pixel_format = PIXFORMAT_JPEG;
+  config.pixel_format = PIXFORMAT_RGB565;  // RGB565 untuk rotasi software
+  config.grab_mode = CAMERA_GRAB_LATEST;
   
   if(psramFound()){
-    config.frame_size = FRAMESIZE_UXGA; // 1600x1200
-    config.jpeg_quality = 10;
+    config.frame_size = FRAMESIZE_VGA;  // 640x480
+    config.jpeg_quality = 12;
     config.fb_count = 2;
+    config.fb_location = CAMERA_FB_IN_PSRAM;
   } else {
-    config.frame_size = FRAMESIZE_SVGA;
+    config.frame_size = FRAMESIZE_QVGA; // 320x240
     config.jpeg_quality = 12;
     config.fb_count = 1;
   }
@@ -39,6 +41,6 @@ void initCamera() {
   if (err != ESP_OK) {
     Serial.printf("[ERROR] Inisialisasi kamera gagal dengan error 0x%x\n", err);
   } else {
-    Serial.println("[DEBUG] Kamera berhasil diinisialisasi.");
+    Serial.println("[DEBUG] Kamera berhasil diinisialisasi (RGB565 mode).");
   }
 }
