@@ -54,4 +54,11 @@ const String MASTER_PIN = "9999";  // PIN Master default
 // Chat ID lutfi
 #define CHAT_ID "684783073" 
 
+// ==========================================
+// 4. KONFIGURASI OTA UPDATE
+// ==========================================
+#define FIRMWARE_VERSION "2.3.0"
+// Ganti URL di bawah ini dengan URL server Anda
+#define OTA_VERSION_URL "http://192.168.110.99:3000/api/version"
+
 #endif // CONFIG_H

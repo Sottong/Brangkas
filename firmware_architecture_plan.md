@@ -1,84 +1,70 @@
-# Rencana Pembuatan Firmware Utama - Brangkas V2
+# Arsitektur OTA (Over-The-Air) Firmware Update ESP32
 
-## 1. Tujuan dan Ruang Lingkup (Scope & Objective)
-Dokumen ini berisi rencana arsitektur dan implementasi firmware untuk sistem brangkas pintar berbasis ESP32. Firmware ini akan menggabungkan kontrol akses ganda (Sidik Jari + Keypad), sistem alarm anti-maling, antarmuka pengguna OLED, integrasi kamera untuk bukti foto, dan notifikasi serta kontrol jarak jauh via Telegram.
+Dokumen ini merangkum rencana arsitektur dan alur kerja (workflow) untuk mengimplementasikan fitur pembaruan firmware (OTA) secara online pada sistem Brangkas menggunakan ESP32.
 
-## 2. Pemetaan Perangkat Keras (Hardware Mapping)
-Berdasarkan kode awal yang ada di `main.ino`, berikut adalah pemetaan pin yang akan digunakan:
+## 1. Konsep Dasar
+ESP32 akan mengambil file firmware (`.bin`) langsung dari server web (HTTP/HTTPS) yang sudah Anda siapkan. Proses ini memanfaatkan partisi OTA pada flash memory ESP32, di mana firmware baru akan diunduh ke partisi pasif (OTA_1), divalidasi, dan jika sukses, ESP32 akan di-reboot untuk menggunakan firmware baru tersebut.
 
-*   **ESP32 Core**: WROVER-KIT (memiliki PSRAM, penting untuk buffer kamera).
-*   **Sensor Sidik Jari**: UART 2 (RX: 32, TX: 33)
-*   **Keypad 4x4**: I2C (SDA: 13, SCL: 14) via modul PCF8574 (Alamat: 0x27)
-*   **OLED 128x64**: I2C (SDA: 13, SCL: 14) (Alamat: 0x3C)
-*   **Aktuator Utama**: Door Lock Relay / Solenoid (Pin: 0)
-*   **Alarm System**:
-    *   Limit Switch 1 (Deteksi Brangkas Diangkat): Pin 15 (Input Pullup)
-    *   Limit Switch 2 (Deteksi Pintu Paksa Buka): Pin 2 (Input Pullup)
-    *   Buzzer: Pin 12
-*   **Kamera**: Menggunakan library ESP32 Camera (koneksi pin paralel standar ESP32-CAM/WROVER). *Catatan: Pinout spesifik kamera perlu disesuaikan.*
-*   **Konektivitas**: WiFi + UniversalTelegramBot.
+## 2. Kebutuhan Server (Hosting Firmware)
+Agar sistem berjalan optimal dan tidak boros bandwidth, server harus menyediakan dua path/endpoint:
+1. **Endpoint Versi (`/version.json` atau `/version.txt`)**: 
+   Mengembalikan informasi versi rilis terbaru.
+   *Contoh respon:* `{"version": "1.0.1", "firmware_url": "http://domainanda.com/firmware/brangkas_v1.0.1.bin"}`
+2. **Endpoint File Firmware**: 
+   Menyediakan file `.bin` yang di-compile dari PlatformIO (.pio/build/esp-wrover-kit/firmware.bin) melalui jalur HTTP/HTTPS.
 
-## 3. Arsitektur Firmware (State Machine)
-Untuk mengakomodasi multi-tasking tanpa `delay()` yang menghambat sistem (blocking), firmware akan menggunakan **State Machine**.
+*Catatan: Pastikan server mensupport HTTP Header `Content-Length` agar ESP32 bisa mengetahui ukuran file secara pasti sebelum memulai update.*
 
-**Daftar State Sistem:**
-1.  **`STATE_IDLE`**: Menunggu input dari Fingerprint, Keypad, atau pesan Telegram. Layar menampilkan status / jam. Terus memantau Limit Switch.
-2.  **`STATE_AUTH_FINGER`**: Menunggu jari ditempelkan (Step 1 dari 2FA).
-3.  **`STATE_AUTH_PIN`**: Menunggu PIN Keypad dimasukkan setelah Fingerprint valid (Step 2 dari 2FA).
-4.  **`STATE_UNLOCKED`**: Door lock terbuka. Menunggu pintu ditutup kembali atau timeout otomatis mengunci. Mengirim foto "Akses Berhasil" ke Telegram.
-5.  **`STATE_ALARM`**: Buzzer menyala selama 20 detik. Mengambil foto dan mengirim peringatan "PERINGATAN! BRANGKAS DIANGKAT/DIBUKA PAKSA" ke Telegram. Mengunci semua akses fisik sementara sampai di-reset.
-6.  **`STATE_ADMIN`**: Mode khusus untuk mendaftarkan (Enroll) atau menghapus (Delete) sidik jari. Diakses melalui master PIN khusus dari Keypad.
+## 3. Alur Kerja (Workflow) pada ESP32
 
-## 4. Rincian Fitur & Logika
+### Trigger Update
+Terdapat dua cara untuk memicu (trigger) pengecekan dan update OTA:
+1. **Manual via Telegram (Direkomendasikan)**: Menambahkan _command_ `/update` di Telegram bot. Sistem brangkas hanya akan mengecek dan mengunduh firmware ketika pemilik memerintahkan.
+2. **Otomatis pada Boot**: Setiap ESP32 dinyalakan ulang, ia akan mengecek versi di server.
 
-### A. Alur Akses (Buka Brangkas)
-1.  **Gagal Akses**: Jika sidik jari salah ATAU PIN salah sebanyak 3 kali, sistem mengambil foto pengguna, mengirimkannya ke Telegram dengan peringatan "Upaya Akses Ilegal", dan masuk ke mode *Cooldown* selama 1 menit (tidak bisa scan FP/Keypad).
-2.  **Sukses Akses**: Jika Fingerprint COCOK dilanjutkan PIN BENAR, Door Lock aktif (LOW/HIGH sesuai relay), ambil foto, kirim ke Telegram "Brangkas Dibuka oleh ID #...", dan buka pintu.
+### Proses Eksekusi Update
+1. ESP32 membuat HTTP GET ke `http://domainanda.com/version.json`.
+2. ESP32 membandingkan versi server dengan versi yang *hardcoded* di source code (misal: `const String FIRMWARE_VERSION = "1.0.0";`).
+3. Jika versi server lebih baru, ESP32 mendownload firmware (`.bin`) menggunakan library `Update.h` atau `HTTPUpdate.h`.
+4. Selama proses update, tampilan LCD/OLED menampilkan "Updating... X%".
+5. Setelah unduhan selesai 100% dan lolos verifikasi _checksum_, sistem memanggil `ESP.restart()`.
 
-### B. Sistem Alarm (Limit Switch)
-*   Pemantauan (Polling) limit switch dilakukan setiap siklus `loop()`.
-*   Jika **Switch 1 (Angkat)** terbuka dari posisi normalnya, trigger Alarm.
-*   Jika **Switch 2 (Pintu Paksa)** terbuka sedangkan status sistem bukan `STATE_UNLOCKED`, trigger Alarm.
-*   **Aksi Alarm**: Buzzer menyala 20 detik (menggunakan timer `millis()`, bukan `delay()` agar WiFi/Telegram tidak putus). Kirim notifikasi + foto ke Telegram. Setelah 20 detik, cek ulang limit switch. Jika masih terbuka, alarm bunyi lagi 20 detik.
+## 4. Modifikasi Kode yang Diperlukan (Implementation Plan)
 
-### C. Manajemen Sidik Jari
-*   **Aktivasi**: Pengguna menekan kombinasi khusus (misal: `*123456#`) di keypad.
-*   **Menu OLED**:
-    *   1: Tambah Sidik Jari
-    *   2: Hapus Sidik Jari
-    *   3: Keluar
-*   **Tambah**: Meminta ID baru (lewat keypad), meminta jari ditempelkan 2x (sesuai standar Enroll).
-*   **Hapus**: Meminta ID yang ingin dihapus (lewat keypad), lalu mengonfirmasi penghapusan.
+### A. Modifikasi `platformio.ini`
+Kita perlu mengubah skema partisi (Partition Scheme) agar memiliki ruang untuk 2 aplikasi (App0 dan App1 untuk proses OTA). 
+Tambahkan baris berikut di konfigurasi platformio environment Anda (jika belum ada):
+```ini
+; Menggunakan skema partition yang mendukung OTA (App = 2 x 1.9MB)
+board_build.partitions = min_spiffs.csv 
+```
 
-### D. Kontrol Jarak Jauh (Telegram)
-*   Library: `UniversalTelegramBot`.
-*   Perintah (Commands) yang diizinkan untuk Admin:
-    *   `/status` : Mengecek kondisi brangkas (Terkunci/Terbuka, status limit switch).
-    *   `/buka` : Membuka paksa door lock (override) & mengambil foto.
-    *   `/foto` : Meminta foto kondisi saat ini (surveillance).
-    *   `/reset_alarm` : Mematikan bunyi buzzer jika sedang alarm.
+### B. Membuat Modul Baru `src/OTASys.h` & `src/OTASys.cpp`
+Modul ini akan bertanggung jawab spesifik terhadap:
+- Mengecek versi firmware dari eksternal.
+- Mengeksekusi proses HTTP OTA Update.
+- Memberi callback progress (untuk di-update ke display).
 
-## 5. Rencana Implementasi Bertahap (Phases)
+### C. Modifikasi `src/TelegramSys.cpp`
+Menambahkan handler untuk perintah `/update`:
+```cpp
+if (text == "/update") {
+    bot.sendMessage(chat_id, "Memulai pengecekan update firmware...", "");
+    // Taruh logic enqueue perintah ke Main Update Task
+}
+```
 
-*   **Fase 1: Framework & State Machine Dasar**
-    Menyatukan komponen I2C (Keypad & OLED) dan UART (Fingerprint) ke dalam satu struktur `loop()` yang non-blocking menggunakan `millis()`.
-*   **Fase 2: Logika Akses & Admin Mode**
-    Membangun alur 2FA (Fingerprint -> PIN). Menambahkan menu Enroll/Delete Fingerprint.
-*   **Fase 3: Alarm System**
-    Mengintegrasikan pembacaan GPIO untuk Limit Switch dan menyalakan/mematikan Buzzer berbasis timer.
-*   **Fase 4: Kamera & Konektivitas WiFi**
-    Menginisialisasi modul kamera ESP32. Menambahkan `WiFiManager` (agar SSID/Pass bisa diubah tanpa flash ulang) dan inisialisasi koneksi jaringan.
-*   **Fase 5: Integrasi Telegram API**
-    Menggabungkan fungsi kirim foto (`bot.sendPhotoByBinary()`) dan bot polling (menerima pesan jarak jauh). Menghubungkan trigger dari Fase 2 & Fase 3 ke fungsi Telegram ini.
+### D. Modifikasi `src/Globals.h` / `src/Config.h`
+Menambahkan konstanta versi dan URL server:
+```cpp
+#define FIRMWARE_VERSION "1.0.0"
+#define FIRMWARE_VERSION_URL "http://serveranda.com/brangkas/version.json"
+```
 
-## 6. Kebutuhan Library & Dependensi
-*   `Wire.h`, `HardwareSerial.h`, `WiFi.h`
-*   `Adafruit_GFX`, `Adafruit_SSD1306`
-*   `I2CKeyPad`
-*   `Adafruit_Fingerprint`
-*   `esp_camera.h` (Built-in di platform Espressif32)
-*   `UniversalTelegramBot` (Serta `ArduinoJson` untuk parsing)
-*   `WiFiManager`
+## 5. Keamanan (Security Consideration)
+1. **Gunakan koneksi HTTPS** jika memungkinkan (membutuhkan Root CA Certificate ditaruh di dalam code).
+2. Jika menggunakan HTTP biasa, ada risiko Man-in-the-Middle namun secara operasional lebih ringan terhadap resource ESP32. Setidaknya pastikan server tidak bisa ditebak mudah strukturnya, atau tambahkan simple token otentikasi di HTTP Headers (contoh: `Authorization: Bearer <TOKEN>`).
 
----
-Rencana ini dirancang untuk memastikan kestabilan dan keamanan Brangkas V2. Pendekatan State Machine dipilih agar fitur alarm, jaringan, dan antarmuka pengguna dapat berjalan secara bersamaan tanpa lag.
+## Kesimpulan Langkah Selanjutnya
+1. Pastikan server sudah siap menampung HTTP request untuk file statis `.bin` dan `.json`.
+2. Jika Anda Setuju dengan plan ini, kita akan mulai mengimplementasikan `OTASys.cpp` dan mengintegrasikannya ke proses `TelegramSys`.

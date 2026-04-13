@@ -6,6 +6,7 @@
 #include <ArduinoJson.h>
 #include "esp_camera.h"
 #include <time.h>
+#include "OTASys.h"
 
 // Client & Bot
 WiFiClientSecure client;
@@ -46,7 +47,8 @@ void handleNewMessages(int numNewMessages) {
             welcome += "Selamat datang di Bot Kendali Brangkas V2.\n\n";
             welcome += "/buka - Buka brangkas jarak jauh\n";
             welcome += "/foto - Ambil foto dari kamera\n";
-            welcome += "/status - Cek status brangkas";
+            welcome += "/status - Cek status brangkas\n";
+            welcome += "/update - Update firmware OTA";
             bot.sendMessage(chat_id, welcome, "");
             lastChatId = chat_id;
         }
@@ -73,7 +75,12 @@ void handleNewMessages(int numNewMessages) {
         }
 
         if (text == "/status") {
-          bot.sendMessage(chat_id, "Sistem Aktif & Terhubung.", "");
+          bot.sendMessage(chat_id, "Sistem Aktif & Terhubung.\nFirmware: v" + String(FIRMWARE_VERSION), "");
+        }
+
+        if (text == "/update") {
+            bot.sendMessage(chat_id, "🔄 Memulai pengecekan update firmware v" + String(FIRMWARE_VERSION) + "...", "");
+            checkAndRunOTA(chat_id);
         }
     }
 }
