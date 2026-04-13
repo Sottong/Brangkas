@@ -47,4 +47,11 @@
 const String USER_PIN = "1234";    // PIN User default
 const String MASTER_PIN = "9999";  // PIN Master default
 
+// ==========================================
+// 3. KONFIGURASI TELEGRAM
+// ==========================================
+#define BOT_TOKEN "8665752696:AAEfKUQ7J4j3TeTuX5p_kWcEs6c3dGAyhgg"
+// Chat ID lutfi
+#define CHAT_ID "684783073" 
+
 #endif // CONFIG_H

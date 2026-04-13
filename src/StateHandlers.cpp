@@ -15,6 +15,10 @@ void handleAlarmState() {
     } else {
       Serial.println("[ALARM] Limit switch masih terpicu. Reset timer alarm.");
       alarmStartTime = millis(); // Perpanjang alarm 20 detik
+
+      // Notify Telegram: Alarm Aktif
+      SafeEvent ev = {EVENT_ALARM, 0};
+      xQueueSend(eventQueue, &ev, 0);
     }
   }
 }
@@ -60,11 +64,20 @@ void handleAuthFingerState() {
     updateDisplay("FP COCOK!", "ID: " + String(finger.fingerID), "Masukkan PIN:");
     inputBuffer = "";
     currentState = STATE_AUTH_PIN;
+
+    // Notify Telegram: Sukses Sidik Jari
+    SafeEvent ev = {EVENT_AUTH_SUCCESS, finger.fingerID};
+    xQueueSend(eventQueue, &ev, 0);
   } else {
     failedAttempts++;
     Serial.printf("[FINGERPRINT] Tidak dikenal. Percobaan gagal ke-%d\n", failedAttempts);
     updateDisplay("GAGAL", "Sidik Jari", "Tidak Dikenal");
     delay(1500);
+
+    // Notify Telegram: Gagal Sidik Jari
+    SafeEvent ev = {EVENT_AUTH_FAILED, 0};
+    xQueueSend(eventQueue, &ev, 0);
+
     if (failedAttempts >= 3) {
       Serial.println("[COOLDOWN] Terlalu banyak percobaan gagal. Memulai cooldown.");
       inCooldown = true;
@@ -87,11 +100,20 @@ void handleAuthPinState() {
         failedAttempts = 0;
         currentState = STATE_UNLOCKED;
         digitalWrite(RELAY_PIN, HIGH); // Buka kunci relay
+
+        // Notify Telegram: Sukses PIN
+        SafeEvent ev = {EVENT_AUTH_SUCCESS, 0};
+        xQueueSend(eventQueue, &ev, 0);
       } else {
         failedAttempts++;
         Serial.printf("[AUTH] PIN User SALAH! Percobaan gagal ke-%d\n", failedAttempts);
         updateDisplay("PIN SALAH!", "Coba Lagi");
         delay(1500);
+
+        // Notify Telegram: Gagal PIN
+        SafeEvent ev = {EVENT_AUTH_FAILED, 0};
+        xQueueSend(eventQueue, &ev, 0);
+
         if (failedAttempts >= 3) {
           Serial.println("[COOLDOWN] Terlalu banyak percobaan gagal. Memulai cooldown.");
           inCooldown = true;

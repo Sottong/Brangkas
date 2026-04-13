@@ -7,9 +7,26 @@
 #include <I2CKeyPad.h>
 #include <Adafruit_Fingerprint.h>
 #include <HardwareSerial.h>
+#include <freertos/FreeRTOS.h>
+#include <freertos/queue.h>
 #include "Config.h"
 
-// Enum State Machine
+// Enum Komunikasi Antar Core
+enum EventType { 
+  EVENT_AUTH_SUCCESS, 
+  EVENT_AUTH_FAILED, 
+  EVENT_ALARM 
+};
+
+struct SafeEvent {
+  EventType type;
+  int data; // ID sidik jari atau data tambahan
+};
+
+enum CommandType {
+  CMD_NONE,
+  CMD_OPEN_RELAY
+};
 enum SystemState {
   STATE_IDLE,
   STATE_AUTH_FINGER,
@@ -44,5 +61,9 @@ extern bool inCooldown;
 extern int adminMenuState;
 extern int targetID;
 extern int enrollStep;
+
+// Queue Handles (Komunikasi Dual-Core)
+extern QueueHandle_t eventQueue;      // Core 1 -> Core 0 (Notify Telegram)
+extern QueueHandle_t commandQueue;    // Core 0 -> Core 1 (Remote Action)
 
 #endif // GLOBALS_H

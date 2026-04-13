@@ -25,3 +25,7 @@ bool inCooldown = false;
 int adminMenuState = 0; // 0: Menu utama, 1: Enroll tunggu ID, 2: Enroll tunggu jari, 3: Delete tunggu ID
 int targetID = 0;
 int enrollStep = 0;
+
+// Queue Handles
+QueueHandle_t eventQueue = NULL;
+QueueHandle_t commandQueue = NULL;

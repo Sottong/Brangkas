@@ -12,6 +12,7 @@
 #include "CameraSys.h"
 #include "NetworkSys.h"
 #include "StateHandlers.h"
+#include "TelegramSys.h"
 
 // ==========================================
 // 1. SETUP (Inisialisasi Sistem)
@@ -22,6 +23,10 @@ void setup() {
   Serial.println("\n\n===================================");
   Serial.println("  SISTEM BRANGKAS V2 - REFACTORED  ");
   Serial.println("===================================");
+
+  // 0. Inisialisasi Antrean (Dual-Core)
+  eventQueue = xQueueCreate(10, sizeof(SafeEvent));
+  commandQueue = xQueueCreate(10, sizeof(CommandType));
 
   // Inisialisasi Pin Dasar
   pinMode(RELAY_PIN, OUTPUT);
@@ -48,6 +53,9 @@ void setup() {
   
   initWiFi();
 
+  // Inisialisasi Task Telegram di Core 0
+  initTelegram();
+
   delay(2000);
   currentState = STATE_IDLE;
   Serial.println("[STATE] Berpindah ke STATE_IDLE");
@@ -58,6 +66,16 @@ void setup() {
 // 2. MAIN LOOP (Perulangan Utama)
 // ==========================================
 void loop() {
+  // --- Antrean Perintah Jarak Jauh (Telegram -> Core 1) ---
+  CommandType cmd;
+  if (xQueueReceive(commandQueue, &cmd, 0) == pdTRUE) {
+    if (cmd == CMD_OPEN_RELAY) {
+      Serial.println("[REMOTE] Perintah Buka dari Telegram.");
+      currentState = STATE_UNLOCKED;
+      digitalWrite(RELAY_PIN, HIGH);
+    }
+  }
+
   // --- A. PROTEKSI & ALARM ---
   // Cek limit switch untuk alarm (jika sedang tidak unlocked dan tidak alarm)
   if (currentState != STATE_UNLOCKED && currentState != STATE_ALARM) {
